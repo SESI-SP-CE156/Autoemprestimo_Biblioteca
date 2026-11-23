@@ -8,6 +8,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     name: Build & Package Windows Installer
@@ -16,6 +19,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Flutter SDK
         uses: subosito/flutter-action@v2
@@ -52,10 +57,69 @@ jobs:
           path: build/installer/BibliotecaSESI-Setup.exe
           if-no-files-found: error
 
-      - name: Create GitHub Release (On Tag Push)
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Generate Release Notes & Commit Log
+        if: github.event_name != 'pull_request'
+        id: release_notes
+        shell: pwsh
+        run: |
+          # 1. Obter versao do pubspec.yaml
+          $pubspec = Get-Content pubspec.yaml -Raw
+          if ($pubspec -match "version:\s*([^\s+]+)") {
+            $appVersion = $matches[1]
+          } else {
+            $appVersion = "1.0.0"
+          }
+
+          # 2. Definir Tag e Nome da Release
+          if ("${{ github.ref }}".StartsWith("refs/tags/v")) {
+            $tagName = "${{ github.ref_name }}"
+            $releaseName = "Biblioteca SESI $tagName"
+          } else {
+            $tagName = "v${appVersion}-build.${{ github.run_number }}"
+            $releaseName = "Biblioteca SESI v${appVersion} (Build #${{ github.run_number }})"
+          }
+
+          # 3. Extrair commits incluidos nesta release
+          $commitLog = ""
+          try {
+            $before = "${{ github.event.before }}"
+            if ($before -and $before -ne "0000000000000000000000000000000000000000") {
+              $commitLog = git log "$before..${{ github.sha }}" --pretty=format:"- %h - %s (%an)"
+            }
+          } catch {}
+
+          if (-not $commitLog -or $commitLog.Trim().Length -eq 0) {
+            $commitLog = git log -n 10 --pretty=format:"- %h - %s (%an)"
+          }
+
+          # 4. Criar corpo da release em Markdown
+          $body = @"
+          ## 📚 Biblioteca SESI - Totem de Autoatendimento e Gestão
+
+          ### 📦 Instalador Windows
+          Baixe o arquivo instalador executável anexado abaixo:
+          - **BibliotecaSESI-Setup.exe**
+
+          ---
+
+          ### 📝 Commits incluídos nesta versão:
+          $commitLog
+
+          ---
+          *Build compilado automaticamente pelo GitHub Actions (Execução #${{ github.run_number }}).*
+          "@
+
+          [System.IO.File]::WriteAllText("release_body.md", $body, [System.Text.Encoding]::UTF8)
+          "tag_name=$tagName" >> $env:GITHUB_OUTPUT
+          "release_name=$releaseName" >> $env:GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: github.event_name != 'pull_request'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.release_notes.outputs.tag_name }}
+          name: ${{ steps.release_notes.outputs.release_name }}
+          body_path: release_body.md
           files: build/installer/BibliotecaSESI-Setup.exe
           generate_release_notes: true
         env:
