@@ -36,7 +36,7 @@ jobs:
         run: flutter config --enable-windows-desktop
 
       - name: Build Windows Release Binary
-        run: flutter build windows --release
+        run: flutter build windows --release --dart-define=GOOGLE_BOOKS_API_KEY="${{ secrets.GOOGLE_BOOKS_API_KEY }}"
 
       - name: Install Inno Setup Compiler
         run: choco install innosetup --no-progress -y
